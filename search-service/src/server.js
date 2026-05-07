@@ -1,0 +1,51 @@
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const Redis = require('ioredis');
+const cors = require('cors');
+const helmet = require('helmet');
+const errorHandler = require('./middleware/errorHandler');
+const logger = require('./utils/logger');
+const {connectToRabbitMQ,consumeEvent} = require('./utils/rabbitmq');
+const searchRoutes = require('./routes/search-routes');
+const {handlePostCreated,handlePostDeleted} = require('./eventHandlers/search-event-handlers')
+const app = express();
+const PORT = process.env.PORT || 3004;
+mongoose.connect(process.env.MONGODB_URI)
+    .then(()=>logger.info('Connected to mongoDB'))
+    .catch((e)=>logger.error('Mongo connection error',e));
+
+const  redisClient = new Redis(process.env.REDIS_URL);
+    //middleware
+app.use(helmet());
+app.use(cors());
+app.use(express.json());
+app.use((req,res,next)=>{
+    logger.info( `Received ${req.method} request to ${req.url}`);
+    logger.info( `Request body, ${req.body} `);
+    next();
+});
+//*** Homework - Implement IP based rate limiting for sensitive endpoints
+//IP based rate limiting for sensitive endpoints
+//*** Homework = pass redis client as part of your reqiest
+// and then implment redis cahing 
+app.use('/api/search',searchRoutes);
+
+app.use(errorHandler);
+
+async function startServer(){
+    try{
+        await connectToRabbitMQ();
+        app.listen(PORT,()=>{
+            logger.info(`Search service running on port  ${PORT}`)
+        });
+        //consume the events / subscribe to the events
+        await consumeEvent('post.created',handlePostCreated)
+
+        await consumeEvent('post.deleted',handlePostDeleted)
+    }catch(e){
+      logger.error(e,'Failed to start search service');
+      process.exit(1);
+    }
+}
+startServer();
